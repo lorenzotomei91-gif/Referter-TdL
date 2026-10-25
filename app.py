@@ -272,22 +272,26 @@ def init_db():
     conn.close()
 
 
-def invia_payload_gsheet(webhook_url: str, payload: dict) -> bool:
-    """Invia un pacchetto dati (visita o nuovo farmaco) al Database separato su Google Sheet."""
+def invia_payload_gsheet(webhook_url: str, payload: dict) -> tuple[bool, str]:
+    """Invia un pacchetto dati (visita o nuovo farmaco) a Suite_Algologia gestendo il redirect 302 di Google."""
     if not webhook_url or not webhook_url.strip().startswith("https://script.google.com"):
-        return False
+        return False, "URL Webhook non configurato."
     try:
         data_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        # NON specificare method="POST": così urllib invia in POST e segue il redirect 302 di Google in GET!
         req = urllib.request.Request(
             webhook_url.strip(),
             data=data_bytes,
             headers={"Content-Type": "application/json"},
-            method="POST",
         )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return (resp.status == 200), f"HTTP {resp.status}"
+    except urllib.error.HTTPError as he:
+        if he.code in [302, 405] and "googleusercontent.com" in str(he.url):
+            return True, "Salvato (Redirect Google completato)"
+        return False, f"Errore HTTP {he.code}: {he.reason}"
+    except Exception as e:
+        return False, str(e)
 
 
 def cerca_nel_prontuario_db(termine: str) -> str | None:
@@ -582,7 +586,7 @@ def sincronizza_da_gsheet(webhook_url: str) -> tuple[int, int]:
         return 0, 0
 
 
-def salva_visita_db(record: dict, webhook_url: str = "") -> bool:
+def salva_visita_db(record: dict, webhook_url: str = "") -> tuple[bool, str]:
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     valori = [record.get(col) for col in COLONNE_DB]
@@ -845,6 +849,9 @@ with st.sidebar:
             else ""
         )
         if gsheet_secret:
+            if st.button("🧪 Test Connessione Suite_Algologia", use_container_width=True):
+            ok_t, msg_t = invia_payload_gsheet(gsheet_url, {"action": "save_drug", "termine_input": "test_connessione", "principio_attivo": " Connessione Attiva"})
+            st.success(f"Connessione OK! ({msg_t})") if ok_t else st.error(f"Errore: {msg_t}")
             gsheet_url = gsheet_secret
             st.success("☁️ DB Esterno Google Sheet attivo")
         else:
@@ -1748,10 +1755,15 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
                     "scale_cliniche": st.session_state["note_scale_cliniche"],
                     "referto_finale": st.session_state["bozza_referto_finale"] or contesto_clinico_completo,
                 }
-                ok_cloud = salva_visita_db(record_visita, webhook_url=gsheet_url)
-                msg_cloud = " e sincronizzata sul DB Esterno Google Sheet!" if ok_cloud else " nel DB locale!"
-                st.success(f"✅ Visita di `{id_paziente.upper()}` salvata{msg_cloud}")
-                st.rerun()
+                ok_cloud, msg_cloud = salva_visita_db(record_visita, webhook_url=gsheet_url)
+                if ok_cloud:
+                    st.success(
+                        f"✅ Visita di `{id_paziente.upper()}` salvata nel DB locale e nella scheda 'Visite' di Suite_Algologia!"
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ Salvata nel DB locale, ma non sincronizzata su Suite_Algologia. Dettaglio: {msg_cloud}"
+                    )
 
     st.divider()
     st.markdown("##### Revisione Finale del Referto Completo")
