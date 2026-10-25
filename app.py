@@ -316,7 +316,7 @@ def chiama_gemini(
     api_key: str,
     prompt: str,
     image: Image.Image = None,
-    model_name: str = "gemini-2.5-flash",
+    model_name: str = "gemini-3.8-flash",
 ) -> str:
     if not api_key:
         return "⚠️ ERRORE: Inserisci una chiave API Gemini valida nella barra laterale o nei Secrets di Streamlit."
@@ -436,7 +436,7 @@ with st.sidebar:
             st.toast(f"☁️ Sincronizzate {recuperate} visite da Google Drive!")
 
     modello_scelto = st.selectbox(
-        "Modello AI:", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0
+        "Modello AI:", ["gemini-3.8-flash", "gemini-3.8-pro"], index=0
     )
 
     st.divider()
