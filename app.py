@@ -45,16 +45,109 @@ def chiama_gemini(api_key: str, prompt: str, image: Image.Image = None, model_na
 
 
 # ==========================================
-# 3. DIZIONARIO VIDEO SEMEIOLOGICI (YOUTUBE)
+# 3. ATLANTE SEMEIOLOGICO ALGOLOGICO
 # ==========================================
-VIDEO_SEMEIOTICA = {
-    "Test di Lasègue (SLR - Radicolopatia L4-S1)": "https://www.youtube.com/watch?v=F0ac42M354M",
-    "Test di Wasserman (Femoral Stretch - Radicolopatia L2-L4)": "https://www.youtube.com/watch?v=k0N2G2_A9v8",
-    "Test di Patrick / FABER (Articolazione Sacroiliaca / Anca)": "https://www.youtube.com/watch?v=sa253_23c4I",
-    "Test di Spurling (Radicolopatia Cervicale)": "https://www.youtube.com/watch?v=c2c6B7X8_yY",
-    "Test della Sindrome del Piriforme (FAIR Test)": "https://www.youtube.com/watch?v=N2V9_p2pX7g",
+ATLANTE_SEMEIOTICA = {
+    "Test di Lasègue (SLR) e Bragard — Radicolopatia L4-S1": {
+        "target": "Radici L5, S1 (più raramente L4) / Conflitto disco-radicolare",
+        "esecuzione": (
+            "Paziente supino. L'esaminatore solleva passivamente l'arto inferiore esteso (flessione d'anca a ginocchio esteso). "
+            "Manovra di sensibilizzazione di Bragard: raggiunto l'angolo del dolore, si abbassa l'arto di 5° finché il dolore scompare e si esegue una dorsiflessione passiva della caviglia."
+        ),
+        "positivita": (
+            "Comparsa/riproduzione del dolore radicolare irradiato sotto il ginocchio tra **30° e 70°** di flessione. "
+            "⚠️ *Nota clinica:* Un dolore limitato alla loggia posteriore della coscia o che compare >70° indica semplice retrazione degli ischiocrurali (falso positivo). "
+            "Il Lasègue crociato (dolore nell'arto affetto sollevando l'arto sano) ha altissima specificità (>90%) per ernia discale."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Straight+Leg+Raise+Test+Lasegue+Bragard+Physiotutors",
+    },
+    "Test di Wasserman (Femoral Stretch) — Radicolopatia L2-L4": {
+        "target": "Nervo Femorale / Radici L2, L3, L4",
+        "esecuzione": (
+            "Paziente prono (o in decubito laterale sul lato sano). L'esaminatore flette passivamente il ginocchio a 90° "
+            "ed estende l'anca sollevando la coscia dal lettino (mantenendo il bacino fermo)."
+        ),
+        "positivita": (
+            "Riproduzione di dolore lancinante/urente o parestesie lungo la **faccia anteriore della coscia** e/o regione antero-mediale della gamba (L4). "
+            "⚠️ *Diagnosi differenziale:* Distinguere dal semplice stiramento miotendineo del retto femorale (psoas/quadricipite)."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Prone+Knee+Bending+Femoral+Nerve+Stretch+Test+Physiotutors",
+    },
+    "Slump Test — Tensione Neurodinamica / Conflitto Durale": {
+        "target": "Sacco durale, midollo e radici lombosacrali (alta sensibilità per conflitto disco-radicolare)",
+        "esecuzione": (
+            "Paziente seduto sul bordo del lettino con mani dietro la schiena. Sequenza progressiva: "
+            "1) Flessione toraco-lombare ('slump'); 2) Flessione del capo (mento allo sterno); "
+            "3) Estensione attiva/passiva del ginocchio dal lato dolente; 4) Dorsiflessione della caviglia; "
+            "5) Rilascio dell'estensione cervicale per verificare la modifica del sintomo."
+        ),
+        "positivita": (
+            "Riproduzione del dolore radicolare tipico del paziente durante l'estensione del ginocchio/dorsiflessione caviglia, "
+            "che **si riduce o scompare riportando il capo in estensione** (conferma dell'origine neurodinamica/meningea)."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Slump+Test+radiculopathy+Physiotutors",
+    },
+    "Test di Kemp (Quadrant Test) — Sindrome Faccette Articolari": {
+        "target": "Articolazioni Zigoapofisarie (Faccette Articolari) Lombari",
+        "esecuzione": (
+            "Paziente in piedi o seduto. L'esaminatore si pone dietro il paziente, afferra le spalle e guida il rachide in "
+            "**estensione combinata a rotazione e lateroflessione omolaterale** verso il lato dolente, applicando una lieve pressione assiale verso il basso (sovraccarico della faccetta)."
+        ),
+        "positivita": (
+            "Riproduzione del **dolore lombare assiale/paramediano** (spesso con irradiazione pseudoradicolare glutea o trocanterica/coscia posteriore sopra il ginocchio). "
+            "Se compare franco dolore radicolare fino al piede, indica restringimento dinamico del forame intervertebrale."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Kemp+Test+Lumbar+Facet+Joint+Physiotutors",
+    },
+    "Test di Patrick (FABER) e Cluster di Laslett — Sacro-Iliaca": {
+        "target": "Articolazione Sacro-Iliaca (SIJ) vs Patologia Coxo-Femorale",
+        "esecuzione": (
+            "**FABER (Flexion, Abduction, External Rotation):** Paziente supino, malleolo esterno posizionato sopra il ginocchio controlaterale (figura a 4). "
+            "L'esaminatore stabilizza la SIAS opposta e spinge delicatamente il ginocchio flesso verso il lettino.\n"
+            "**Cluster di Laslett completo (5 test):** 1. Distraction, 2. Thigh Thrust (il più sensibile), 3. FABER, 4. Compression, 5. Gaenslen."
+        ),
+        "positivita": (
+            "• **Dolore posteriore profondo (area di Fortin / solco sacroiliaco):** Positivo per disfunzione della Sacro-Iliaca.\n"
+            "• **Dolore anteriore/inguinale:** Positivo per patologia intra-articolare dell'anca.\n"
+            "📌 *Criterio di Laslett:* **≥ 3 test provocativi positivi su 5** confermano l'origine sacro-iliaca del dolore (alta sensibilità e specificità)."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Laslett+Cluster+FABER+Test+Sacroiliac+Joint+Physiotutors",
+    },
+    "FAIR Test e Test di Pace — Sindrome del Piriforme": {
+        "target": "Muscolo Piriforme / Intrappolamento extrapelvico del Nervo Sciatico",
+        "esecuzione": (
+            "• **FAIR Test (Flexion, Adduction, Internal Rotation):** Paziente in decubito laterale sul lato sano. Anca flessa a 60°, ginocchio a 90°. L'esaminatore stabilizza il bacino e imprime adduzione e intrarotazione dell'anca (stiramento passivo del piriforme).\n"
+            "• **Test di Pace e Nagel:** Paziente seduto; abduzione ed extrarotazione attiva delle cosce contro la resistenza manuale dell'operatore (contrazione isometrica del piriforme)."
+        ),
+        "positivita": (
+            "Dolore profondo al centro del gluteo (lungo il decorso del piriforme) associato o meno a irradiazione sciatalgica posteriore."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=FAIR+Test+Piriformis+Syndrome+Physiotutors",
+    },
+    "Test di Spurling — Radicolopatia Cervicale": {
+        "target": "Radici Cervicali (C4-T1) / Stenosi Foraminale Cervicale",
+        "esecuzione": (
+            "Paziente seduto. Si invita il paziente a estendere il collo e ad eseguire una lateroflessione (e lieve rotazione) verso il lato sintomatico. "
+            "Se il movimento da solo non evoca il sintomo, l'esaminatore applica una **cauta compressione assiale** sul vertice del capo."
+        ),
+        "positivita": (
+            "Riproduzione o esacerbazione del **dolore radicolare e/o parestesie lungo il braccio omolaterale** (secondo il dermatomero coinvolto). "
+            "Il solo dolore nucale locale non rende il test positivo per radicolopatia. *Controindicato in caso di instabilità vertebrale, traumi acuti o mielopatia.*"
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Spurling+Test+Cervical+Radiculopathy+Physiotutors",
+    },
+    "Segno di Tinel e Manovra di Phalen — Neuropatie da Intrappolamento": {
+        "target": "Nervo Mediano (Tunnel Carpale) o altri tronchi nervosi superficiali (Ulnare al gomito, Tibiale al tunnel tarsale)",
+        "esecuzione": (
+            "• **Tinel:** Percussione leggera sul decorso del nervo nel punto di sospetta compressione (es. legamento trasverso del carpo).\n"
+            "• **Phalen:** Flessione massimale attiva dei polsi (dorso contro dorso) mantenuta per 60 secondi."
+        ),
+        "positivita": (
+            "Comparsa di parestesie/scossa elettrica nel territorio di innervazione distale del nervo esplorato."
+        ),
+        "yt_url": "https://www.youtube.com/results?search_query=Phalen+Tinel+Carpal+Tunnel+Test+Physiotutors",
+    },
 }
-
 
 # ==========================================
 # 4. SIDEBAR: CONFIGURAZIONE E SELETTORE VISITA
@@ -179,10 +272,24 @@ with tab_visita:
                 placeholder="es. Lasègue positivo a 40° a dx, Wasserman negativo, ROT simmetrici, ipoestesia tattile territorio L5 dx, forza segmentaria conservata (EHL 5/5)...",
             )
         with ceo2:
-            st.markdown("🎥 **Atlante Video Semeiologico Rapido**")
-            manovra_scelta = st.selectbox("Seleziona manovra da visualizzare:", list(VIDEO_SEMEIOTICA.keys()))
-            with st.expander("▶️ Apri Video Dimostrativo Manovra", expanded=False):
-                st.video(VIDEO_SEMEIOTICA[manovra_scelta])
+            st.markdown("🧭 **Atlante Semeiologico & Video**")
+            manovra_scelta = st.selectbox("Seleziona manovra clinica:", list(ATLANTE_SEMEIOTICA.keys()))
+            info_manovra = ATLANTE_SEMEIOTICA[manovra_scelta]
+
+            with st.container(border=True):
+                st.caption(f"🎯 **Target:** {info_manovra['target']}")
+                st.markdown(f"**Esecuzione:** {info_manovra['esecuzione']}")
+                st.markdown(f"**Positività:** {info_manovra['positivita']}")
+
+                # Pulsante diretto anti-blocco che apre i video su YouTube in una nuova scheda
+                st.link_button(
+                    "🎥 Apri Video Dimostrativi su YouTube",
+                    info_manovra["yt_url"],
+                    use_container_width=True,
+                )
+
+                # Pulsante rapido per inserire il nome della manovra direttamente nel testo dell'EO!
+                st.caption("💡 *Puoi copiare i dettagli direttamente nel box Esame Obiettivo a sinistra.*")
 
         dati_raccolti += (
             f"APR: {apr}\nALLERGIE / ANTICOAGULANTI: {allergie_anticoag}\n"
