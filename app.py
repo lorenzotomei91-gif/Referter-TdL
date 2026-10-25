@@ -849,9 +849,6 @@ with st.sidebar:
             else ""
         )
         if gsheet_secret:
-            if st.button("🧪 Test Connessione Suite_Algologia", use_container_width=True):
-            ok_t, msg_t = invia_payload_gsheet(gsheet_url, {"action": "save_drug", "termine_input": "test_connessione", "principio_attivo": " Connessione Attiva"})
-            st.success(f"Connessione OK! ({msg_t})") if ok_t else st.error(f"Errore: {msg_t}")
             gsheet_url = gsheet_secret
             st.success("☁️ DB Esterno Google Sheet attivo")
         else:
