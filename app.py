@@ -868,9 +868,7 @@ with st.sidebar:
             ok_t, msg_t = invia_payload_gsheet(
                 gsheet_url,
                 {
-                    "action": "save_drug",
-                    "termine_input": "test_connessione",
-                    "principio_attivo": "Connessione Attiva",
+                    "action": "test",
                 },
             )
             if ok_t:
