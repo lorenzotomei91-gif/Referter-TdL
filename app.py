@@ -863,7 +863,8 @@ with st.sidebar:
             st.session_state["gsheet_synced"] = True
             if rec_v > 0 or rec_f > 0:
                 st.toast(f"☁️ Sincronizzati dal Cloud: {rec_v} visite e {rec_f} farmaci!")
-if st.button("🧪 Test Connessione Suite_Algologia", use_container_width=True):
+                
+        if st.button("🧪 Test Connessione Suite_Algologia", use_container_width=True):
             ok_t, msg_t = invia_payload_gsheet(
                 gsheet_url,
                 {
