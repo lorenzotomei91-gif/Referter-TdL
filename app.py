@@ -1,7 +1,8 @@
 from datetime import date, datetime
-import io
 import json
+import re
 import sqlite3
+import time
 import urllib.request
 import pandas as pd
 import streamlit as st
@@ -9,7 +10,7 @@ from google import genai
 from PIL import Image
 
 # ==========================================
-# 1. CONFIGURAZIONE PAGINA E STATO SESSIONE
+# 1. CONFIGURAZIONE PAGINA E PRONTUARIO MOLECOLE
 # ==========================================
 st.set_page_config(
     page_title="Suite Algologica - Terapia del Dolore",
@@ -27,6 +28,311 @@ LISTA_PRESTAZIONI = [
     "6. Rinnovo Prescrizione Cannabis",
 ]
 
+# Dizionario di conversione automatica istantanea: Nome Commerciale -> Principio Attivo
+PRONTUARIO_COMMERCIALI = {
+    # Paracetamolo e associazioni
+    "tachipirina": "Paracetamolo",
+    "efferalgan": "Paracetamolo",
+    "acetamol": "Paracetamolo",
+    "tachidol": "Paracetamolo + Codeina",
+    "coefferalgan": "Paracetamolo + Codeina",
+    "codamol": "Paracetamolo + Codeina",
+    "kolibri": "Tramadolo + Paracetamolo",
+    "kolibrì": "Tramadolo + Paracetamolo",
+    "patrol": "Tramadolo + Paracetamolo",
+    "izalgi": "Ossicodone + Paracetamolo",
+    "depalgos": "Ossicodone + Paracetamolo",
+    # Oppioidi
+    "contramal": "Tramadolo",
+    "fortradol": "Tramadolo",
+    "tradonal": "Tramadolo",
+    "palexia": "Tapentadolo",
+    "targin": "Ossicodone + Naloxone",
+    "targinact": "Ossicodone + Naloxone",
+    "oxycontin": "Ossicodone",
+    "oxifast": "Ossicodone",
+    "oramorph": "Morfina orale",
+    "ms contin": "Morfina orale",
+    "twice": "Morfina orale",
+    "jurnista": "Idromorfone",
+    "durogesic": "Fentanil TTS",
+    "fentadur": "Fentanil TTS",
+    "matrifen": "Fentanil TTS",
+    "actiq": "Fentanil transmucosale",
+    "effentora": "Fentanil transmucosale",
+    "abstral": "Fentanil sublinguale",
+    "pecfent": "Fentanil spray nasale",
+    "instanyl": "Fentanil spray nasale",
+    "transtec": "Buprenorfina TTS",
+    "busette": "Buprenorfina TTS",
+    "buprefarm": "Buprenorfina TTS",
+    "norspan": "Buprenorfina TTS",
+    "temgesic": "Buprenorfina sublinguale",
+    # Neuropatici, Antiepilettici e Antidepressivi
+    "lyrica": "Pregabalin",
+    "ecubalin": "Pregabalin",
+    "neurontin": "Gabapentin",
+    "keneil": "Gabapentin",
+    "laroxyl": "Amitriptilina",
+    "adepril": "Amitriptilina",
+    "cymbalta": "Duloxetina",
+    "xeristar": "Duloxetina",
+    "efexor": "Venlafaxina",
+    "zarelis": "Venlafaxina",
+    "faxine": "Venlafaxina",
+    "tegretol": "Carbamazepina",
+    "tolep": "Oxcarbazepina",
+    "lamictal": "Lamotrigina",
+    "topamax": "Topiramato",
+    "vimpat": "Lacosamide",
+    "rivotril": "Clonazepam",
+    "versatis": "Lidocaina cerotto 5%",
+    "qutenza": "Capsaicina cerotto 8%",
+    # FANS e COXIB
+    "brufen": "Ibuprofene",
+    "moment": "Ibuprofene",
+    "nurofen": "Ibuprofene",
+    "spidifen": "Ibuprofene arginina",
+    "oki": "Ketoprofene sale di lisina",
+    "artrosilene": "Ketoprofene sale di lisina",
+    "orudis": "Ketoprofene",
+    "enantyum": "Dexketoprofene",
+    "ketesse": "Dexketoprofene",
+    "voltaren": "Diclofenac",
+    "dicloreum": "Diclofenac",
+    "flector": "Diclofenac epolamina",
+    "toradol": "Ketorolac",
+    "lixi": "Ketorolac",
+    "synflex": "Naprossene",
+    "momendol": "Naprossene",
+    "naprosyn": "Naprossene",
+    "aulin": "Nimesulide",
+    "mesulid": "Nimesulide",
+    "indoxen": "Indometacina",
+    "feldene": "Piroxicam",
+    "brexidol": "Piroxicam",
+    "mobic": "Meloxicam",
+    "arcoxia": "Etoricoxib",
+    "tauxib": "Etoricoxib",
+    "algix": "Etoricoxib",
+    "celebrex": "Celecoxib",
+    "gladio": "Aceclofenac",
+    # Miorilassanti
+    "flexiban": "Ciclobenzaprina",
+    "sirdalud": "Tizanidina",
+    "navizan": "Tizanidina",
+    "expose": "Eperisone",
+    "muscoril": "Tiocolchicoside",
+    "miotens": "Tiocolchicoside",
+    "lioresal": "Baclofene",
+    "lyseen": "Pridinolo",
+    # Corticosteroidi
+    "medrol": "Metilprednisolone",
+    "urbason": "Metilprednisolone",
+    "deltacortene": "Prednisone",
+    "lodotra": "Prednisone",
+    "bentelan": "Betametasone",
+    "decadron": "Desametasone",
+    "soldesam": "Desametasone",
+    "deflan": "Deflazacort",
+    "kenacort": "Triamcinolone",
+    # Neurotrofici e Integratori
+    "nicetile": "L-Acetilcarnitina",
+    "branigen": "L-Acetilcarnitina",
+    "assonal": "Acido Alfa-Lipoico + Complesso B",
+    "tiobec": "Acido Alfa-Lipoico",
+    "alanerv": "Acido Alfa-Lipoico + Vitamine B",
+    "normast": "Palmitoiletanolamide (PEA)",
+    "pelvilen": "Palmitoiletanolamide (PEA)",
+    "dobetin": "Cianocobalamina (Vitamina B12)",
+    "benexol": "Vitamine B1 + B6 + B12",
+    # Triptani
+    "imigran": "Sumatriptan",
+    "maxalt": "Rizatriptan",
+    "relpax": "Eletriptan",
+    "almogran": "Almotriptan",
+    "difmetre": "Indometacina + Proclorperazina + Caffeina",
+    # Anticoagulanti e Antiaggreganti
+    "cardioaspirina": "Acido Acetilsalicilico",
+    "cardioaspirin": "Acido Acetilsalicilico",
+    "aspirinetta": "Acido Acetilsalicilico",
+    "plavix": "Clopidogrel",
+    "tiklid": "Ticlopidina",
+    "brilique": "Ticagrelor",
+    "efient": "Prasugrel",
+    "ibustrin": "Indobufene",
+    "eliquis": "Apixaban",
+    "xarelto": "Rivaroxaban",
+    "pradaxa": "Dabigatran",
+    "lixiana": "Edoxaban",
+    "coumadin": "Warfarin",
+    "sintrom": "Acenocumarolo",
+    "clexane": "Enoxaparina",
+    "inhixa": "Enoxaparina",
+    "arixtra": "Fondaparinux",
+    "seleparina": "Nadroparina",
+    # Internistici, Gastroprotettori, Cardiovascolari, Metabolici
+    "pantorc": "Pantoprazolo",
+    "pantopan": "Pantoprazolo",
+    "pantecta": "Pantoprazolo",
+    "peptazol": "Pantoprazolo",
+    "lucen": "Esomeprazolo",
+    "nexium": "Esomeprazolo",
+    "mepral": "Omeprazolo",
+    "antra": "Omeprazolo",
+    "lansox": "Lansoprazolo",
+    "pariet": "Rabeprazolo",
+    "triatec": "Ramipril",
+    "quark": "Ramipril",
+    "norvasc": "Amlodipina",
+    "lasix": "Furosemide",
+    "luvion": "Canrenone",
+    "kanrenol": "Canrenone",
+    "aldactone": "Spironolattone",
+    "sequacor": "Bisoprololo",
+    "congescor": "Bisoprololo",
+    "cardicor": "Bisoprololo",
+    "lobivon": "Nebivololo",
+    "tenormin": "Atenololo",
+    "dilatrend": "Carvedilolo",
+    "seloken": "Metoprololo",
+    "tareg": "Valsartan",
+    "blopress": "Candesartan",
+    "aprovel": "Irbesartan",
+    "plaunac": "Olmesartan",
+    "olpress": "Olmesartan",
+    "micardis": "Telmisartan",
+    "lortaan": "Losartan",
+    "cardura": "Doxazosina",
+    "omnic": "Tamsulosina",
+    "zyloric": "Allopurinolo",
+    "adenuric": "Febuxostat",
+    "torvast": "Atorvastatina",
+    "totalip": "Atorvastatina",
+    "crestor": "Rosuvastatina",
+    "sivastin": "Simvastatina",
+    "zetia": "Ezetimibe",
+    "inegy": "Ezetimibe + Simvastatina",
+    "eutirox": "Levotiroxina",
+    "tirosint": "Levotiroxina",
+    "tapazole": "Metimazolo",
+    "glucophage": "Metformina",
+    "metforal": "Metformina",
+    "slowmet": "Metformina",
+    "jardiance": "Empagliflozin",
+    "forxiga": "Dapagliflozin",
+    "januvia": "Sitagliptin",
+    "ozempic": "Semaglutide",
+    "rybelsus": "Semaglutide",
+    "trulicity": "Dulaglutide",
+    "lantus": "Insulina Glargine",
+    "toujeo": "Insulina Glargine",
+    "novorapid": "Insulina Aspart",
+    "humalog": "Insulina Lispro",
+    "xanax": "Alprazolam",
+    "frontal": "Alprazolam",
+    "tavor": "Lorazepam",
+    "en": "Delorazepam",
+    "valium": "Diazepam",
+    "lexotan": "Bromazepam",
+    "minias": "Lormetazepam",
+    "stilnox": "Zolpidem",
+    "zoloft": "Sertralina",
+    "cipralex": "Escitalopram",
+    "entact": "Escitalopram",
+    "elopram": "Citalopram",
+    "sereupin": "Paroxetina",
+    "dropaxin": "Paroxetina",
+    "prozac": "Fluoxetina",
+    "trittico": "Trazodone",
+    "remeron": "Mirtazapina",
+    "seroquel": "Quetiapina",
+    "dibase": "Colecalciferolo (Vitamina D3)",
+    "plasil": "Metoclopramide",
+    "zofran": "Ondansetron",
+    "movicol": "Macrogol",
+    "laevolac": "Lattulosio",
+}
+
+
+def traduci_nome_commerciale(testo: str) -> tuple[str, str | None]:
+    """
+    Se il testo contiene un nome commerciale noto, lo sostituisce con il Principio Attivo.
+    Restituisce (nuovo_testo, messaggio_conversione_se_avvenuta).
+    """
+    if not isinstance(testo, str) or not testo.strip():
+        return "", None
+    originale = testo.strip()
+    testo_lower = originale.lower()
+
+    if testo_lower in PRONTUARIO_COMMERCIALI:
+        molecola = PRONTUARIO_COMMERCIALI[testo_lower]
+        if molecola.lower() != testo_lower:
+            return molecola, f"{originale} ➔ {molecola}"
+
+    for comm, molecola in PRONTUARIO_COMMERCIALI.items():
+        pattern = r"\b" + re.escape(comm) + r"\b"
+        if re.search(pattern, testo_lower):
+            nuovo = re.sub(pattern, molecola, originale, flags=re.IGNORECASE)
+            if nuovo.lower() != originale.lower():
+                return nuovo, f"{comm.capitalize()} ➔ {molecola}"
+
+    return originale, None
+
+
+def normalizza_df_farmaci(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Applica la traduzione da nome commerciale a molecola sulla colonna 'Principio Attivo'."""
+    df_clean = df.copy()
+    conversioni = []
+    if "Principio Attivo" in df_clean.columns:
+        nuovi_valori = []
+        for val in df_clean["Principio Attivo"]:
+            if pd.isna(val) or str(val).strip() == "":
+                nuovi_valori.append("")
+            else:
+                tradotto, msg = traduci_nome_commerciale(str(val))
+                nuovi_valori.append(tradotto)
+                if msg:
+                    conversioni.append(msg)
+        df_clean["Principio Attivo"] = nuovi_valori
+    return df_clean, conversioni
+
+
+def formatta_df_farmaci_testo(df: pd.DataFrame, mostra_note: bool = False) -> str:
+    """Formatta la tabella dei farmaci in una stringa clinica ordinata per il referto e il DB."""
+    if df is None or df.empty:
+        return "Nessuna terapia inserita"
+    righe_valide = []
+    for _, row in df.iterrows():
+        pa = str(row.get("Principio Attivo") or "").strip()
+        pos = str(row.get("Posologia") or "").strip()
+        freq = str(row.get("Frequenza") or "").strip()
+        note = str(row.get("Efficacia / Note") or "").strip() if mostra_note else ""
+        if pa or pos or freq:
+            voce = f"- {pa or 'Farmaco non spec.'}"
+            if pos:
+                voce += f" {pos}"
+            if freq:
+                voce += f" ({freq})"
+            if note:
+                voce += f" [Note: {note}]"
+            righe_valide.append(voce)
+    return "\n".join(righe_valide) if righe_valide else "Nessuna terapia inserita"
+
+
+# ==========================================
+# 2. INIZIALIZZAZIONE STATO SESSIONE
+# ==========================================
+def get_empty_dom_df():
+    return pd.DataFrame([{"Principio Attivo": "", "Posologia": "", "Frequenza": ""}])
+
+
+def get_empty_antalgica_df():
+    return pd.DataFrame(
+        [{"Principio Attivo": "", "Posologia": "", "Frequenza": "", "Efficacia / Note": ""}]
+    )
+
+
 default_states = {
     "id_paziente_input": "",
     "fascia_eta_input": "",
@@ -35,27 +341,107 @@ default_states = {
     "ultimo_quadro_nota": "",
     "ocr_estratti": "",
     "note_scale_cliniche": "",
+    "diagnosi_confermata": "",
+    "terapia_proposta": "",
+    "diag_t1": "",
+    "diag_t4": "",
+    "ter_t1": "",
+    "ter_t4": "",
     "bozza_referto_finale": "",
-    # Variabili strutturate per la Ricerca Clinica (popolate dai calcolatori)
     "ricerca_dn4": None,
     "ricerca_fiqr": None,
     "ricerca_mme": None,
     "ricerca_cast": None,
     "gsheet_synced": False,
+    "ver_dom": 0,
+    "ver_ant": 0,
+    "ver_prescr": 0,
 }
 for key, val in default_states.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
+if "df_terapia_dom" not in st.session_state:
+    st.session_state["df_terapia_dom"] = get_empty_dom_df()
+if "df_terapia_antalgica" not in st.session_state:
+    st.session_state["df_terapia_antalgica"] = get_empty_antalgica_df()
+if "df_terapia_prescritta" not in st.session_state:
+    st.session_state["df_terapia_prescritta"] = get_empty_antalgica_df()
+
+
+# Callback per mantenere sincronizzati i campi Diagnosi e Terapia tra Scheda 1 e Scheda 4
+def sync_diag_from_t1():
+    val = st.session_state["diag_t1"]
+    st.session_state["diagnosi_confermata"] = val
+    st.session_state["diag_t4"] = val
+
+
+def sync_diag_from_t4():
+    val = st.session_state["diag_t4"]
+    st.session_state["diagnosi_confermata"] = val
+    st.session_state["diag_t1"] = val
+
+
+def sync_ter_from_t1():
+    val = st.session_state["ter_t1"]
+    st.session_state["terapia_proposta"] = val
+    st.session_state["ter_t4"] = val
+
+
+def sync_ter_from_t4():
+    val = st.session_state["ter_t4"]
+    st.session_state["terapia_proposta"] = val
+    st.session_state["ter_t1"] = val
+
+
+def imposta_diagnosi_e_terapia(testo_diagnosi: str, testo_terapia: str):
+    st.session_state["diagnosi_confermata"] = testo_diagnosi
+    st.session_state["diag_t1"] = testo_diagnosi
+    st.session_state["diag_t4"] = testo_diagnosi
+    st.session_state["terapia_proposta"] = testo_terapia
+    st.session_state["ter_t1"] = testo_terapia
+    st.session_state["ter_t4"] = testo_terapia
+
 
 # ==========================================
-# 2. MOTORE DATABASE STRUTTURATO PER RICERCA
+# 3. MOTORE DATABASE STRUTTURATO PER RICERCA
 # ==========================================
 DB_FILE = "ambulatorio_dolore_ricerca.db"
 
+COLONNE_DB = [
+    "id_paziente",
+    "fascia_eta",
+    "data_visita",
+    "timestamp_salvataggio",
+    "tipo_prestazione",
+    "terapia_domiciliare",
+    "terapia_antalgica",
+    "meccanismo_dolore",
+    "nrs_riposo",
+    "nrs_movimento",
+    "pgic_esito",
+    "score_dn4",
+    "score_fiqr",
+    "mme_oppioidi",
+    "score_cast",
+    "procedura_tipo",
+    "procedura_livello_lato",
+    "procedura_guida",
+    "ozono_seduta",
+    "ozono_conc_ug_ml",
+    "ozono_vol_ml",
+    "cannabis_preparato",
+    "diagnosi_confermata",
+    "terapia_proposta",
+    "dati_clinici",
+    "ocr_estratti",
+    "scale_cliniche",
+    "referto_finale",
+]
+
 
 def init_db():
-    """Crea la tabella strutturata con colonne atomiche per ricerca clinica e statistica."""
+    """Crea la tabella e aggiorna automaticamente eventuali database precedenti aggiungendo le nuove colonne."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute(
@@ -67,6 +453,8 @@ def init_db():
             data_visita TEXT NOT NULL,
             timestamp_salvataggio TEXT NOT NULL,
             tipo_prestazione TEXT NOT NULL,
+            terapia_domiciliare TEXT,
+            terapia_antalgica TEXT,
             meccanismo_dolore TEXT,
             nrs_riposo INTEGER,
             nrs_movimento INTEGER,
@@ -82,6 +470,8 @@ def init_db():
             ozono_conc_ug_ml INTEGER,
             ozono_vol_ml INTEGER,
             cannabis_preparato TEXT,
+            diagnosi_confermata TEXT,
+            terapia_proposta TEXT,
             dati_clinici TEXT,
             ocr_estratti TEXT,
             scale_cliniche TEXT,
@@ -89,12 +479,33 @@ def init_db():
         )
         """
     )
+    # Migrazione automatica sicura per database già esistenti
+    nuove_colonne = [
+        ("terapia_domiciliare", "TEXT"),
+        ("terapia_antalgica", "TEXT"),
+        ("diagnosi_confermata", "TEXT"),
+        ("terapia_proposta", "TEXT"),
+    ]
+    for nome_col, tipo_col in nuove_colonne:
+        try:
+            c.execute(f"ALTER TABLE visite ADD COLUMN {nome_col} {tipo_col}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
 
+def esporta_db_json() -> str:
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM visite ORDER BY id ASC")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return json.dumps(rows, ensure_ascii=False, indent=2)
+
+
 def invia_a_gsheet(webhook_url: str, record_dict: dict) -> bool:
-    """Invia il record salvato in tempo reale al Foglio Google (Google Drive)."""
     if not webhook_url or not webhook_url.strip().startswith("https://script.google.com"):
         return False
     try:
@@ -112,7 +523,6 @@ def invia_a_gsheet(webhook_url: str, record_dict: dict) -> bool:
 
 
 def sincronizza_da_gsheet(webhook_url: str) -> int:
-    """Se il DB SQLite locale è vuoto (es. dopo riavvio server), recupera tutto da Google Sheets."""
     if not webhook_url or not webhook_url.strip().startswith("https://script.google.com"):
         return 0
     try:
@@ -126,50 +536,20 @@ def sincronizza_da_gsheet(webhook_url: str) -> int:
 
 
 def salva_visita_db(record: dict, webhook_url: str = "") -> bool:
-    """Salva nel DB SQLite locale e, se attivo, sincronizza sul Foglio Google."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    colonne = [
-        "id_paziente",
-        "fascia_eta",
-        "data_visita",
-        "timestamp_salvataggio",
-        "tipo_prestazione",
-        "meccanismo_dolore",
-        "nrs_riposo",
-        "nrs_movimento",
-        "pgic_esito",
-        "score_dn4",
-        "score_fiqr",
-        "mme_oppioidi",
-        "score_cast",
-        "procedura_tipo",
-        "procedura_livello_lato",
-        "procedura_guida",
-        "ozono_seduta",
-        "ozono_conc_ug_ml",
-        "ozono_vol_ml",
-        "cannabis_preparato",
-        "dati_clinici",
-        "ocr_estratti",
-        "scale_cliniche",
-        "referto_finale",
-    ]
-    valori = [record.get(col) for col in colonne]
-    placeholders = ", ".join(["?"] * len(colonne))
+    valori = [record.get(col) for col in COLONNE_DB]
+    placeholders = ", ".join(["?"] * len(COLONNE_DB))
     c.execute(
-        f"INSERT INTO visite ({', '.join(colonne)}) VALUES ({placeholders})",
+        f"INSERT INTO visite ({', '.join(COLONNE_DB)}) VALUES ({placeholders})",
         valori,
     )
     conn.commit()
     conn.close()
-
-    # Sincronizzazione Cloud su Google Drive (se configurata)
     return invia_a_gsheet(webhook_url, record)
 
 
 def get_df_tutte_visite() -> pd.DataFrame:
-    """Restituisce l'intero database come DataFrame Pandas pronto per analisi ed export."""
     conn = sqlite3.connect(DB_FILE)
     df = pd.read_sql_query("SELECT * FROM visite ORDER BY id DESC", conn)
     conn.close()
@@ -177,7 +557,6 @@ def get_df_tutte_visite() -> pd.DataFrame:
 
 
 def elimina_visita_per_id(row_id: int):
-    """Elimina una singola riga dal database locale tramite il suo ID univoco."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("DELETE FROM visite WHERE id = ?", (row_id,))
@@ -212,32 +591,6 @@ def get_tutti_id_pazienti() -> list:
 def importa_lista_record_db(records: list) -> int:
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    colonne = [
-        "id_paziente",
-        "fascia_eta",
-        "data_visita",
-        "timestamp_salvataggio",
-        "tipo_prestazione",
-        "meccanismo_dolore",
-        "nrs_riposo",
-        "nrs_movimento",
-        "pgic_esito",
-        "score_dn4",
-        "score_fiqr",
-        "mme_oppioidi",
-        "score_cast",
-        "procedura_tipo",
-        "procedura_livello_lato",
-        "procedura_guida",
-        "ozono_seduta",
-        "ozono_conc_ug_ml",
-        "ozono_vol_ml",
-        "cannabis_preparato",
-        "dati_clinici",
-        "ocr_estratti",
-        "scale_cliniche",
-        "referto_finale",
-    ]
     inseriti = 0
     for r in records:
         id_p = str(r.get("id_paziente", "")).strip().upper()
@@ -249,11 +602,11 @@ def importa_lista_record_db(records: list) -> int:
             (id_p, ts),
         )
         if c.fetchone()[0] == 0:
-            valori = [r.get(col) if r.get(col) != "" else None for col in colonne]
+            valori = [r.get(col) if r.get(col) != "" else None for col in COLONNE_DB]
             valori[0] = id_p
-            placeholders = ", ".join(["?"] * len(colonne))
+            placeholders = ", ".join(["?"] * len(COLONNE_DB))
             c.execute(
-                f"INSERT INTO visite ({', '.join(colonne)}) VALUES ({placeholders})",
+                f"INSERT INTO visite ({', '.join(COLONNE_DB)}) VALUES ({placeholders})",
                 valori,
             )
             inseriti += 1
@@ -266,7 +619,7 @@ init_db()
 
 
 # ==========================================
-# 3. LOGICA AUTOMATICA AL CAMBIO ID PAZIENTE
+# 4. LOGICA AUTOMATICA AL CAMBIO ID PAZIENTE
 # ==========================================
 def aggiorna_stato_da_id(id_scelto: str):
     id_norm = id_scelto.strip().upper()
@@ -288,10 +641,18 @@ def aggiorna_stato_da_id(id_scelto: str):
         elif st.session_state["tipo_prestazione"] == LISTA_PRESTAZIONI[0]:
             st.session_state["tipo_prestazione"] = LISTA_PRESTAZIONI[1]
 
+        diag_prec = ultima.get("diagnosi_confermata") or ""
+        ter_prec = ultima.get("terapia_proposta") or ""
+        riepilogo_extra = ""
+        if diag_prec:
+            riepilogo_extra += f"\nDIAGNOSI PRECEDENTE: {diag_prec}"
+        if ter_prec:
+            riepilogo_extra += f"\nTERAPIA PRESCRITTA PRECEDENTE: {ter_prec}"
+
         st.session_state["ultimo_quadro_nota"] = (
             f"Ultimo accesso del {ultima['data_visita']} ({ultima['tipo_prestazione']}): "
-            f"NRS riposo {ultima.get('nrs_riposo', '-')}/10, dinamico {ultima.get('nrs_movimento', '-')}/10.\n"
-            f"{ultima.get('dati_clinici', '')}"
+            f"NRS riposo {ultima.get('nrs_riposo', '-')}/10, dinamico {ultima.get('nrs_movimento', '-')}/10."
+            f"{riepilogo_extra}\n{ultima.get('dati_clinici', '')}"
         )
     else:
         st.session_state["tipo_prestazione"] = LISTA_PRESTAZIONI[0]
@@ -310,7 +671,7 @@ def callback_select_archivio():
 
 
 # ==========================================
-# 4. FUNZIONE CHIAMATA API GEMINI
+# 5. CHIAMATA API GEMINI CON ANTI-BLOCCO 503
 # ==========================================
 def chiama_gemini(
     api_key: str,
@@ -318,34 +679,72 @@ def chiama_gemini(
     image: Image.Image = None,
     model_name: str = "gemini-3.8-flash",
 ) -> str:
+    """Chiama Gemini con retry automatico e fallback su modelli alternativi in caso di errore 503 o 404."""
     if not api_key:
-        return "⚠️ ERRORE: Inserisci una chiave API Gemini valida nella barra laterale o nei Secrets di Streamlit."
-    try:
-        client = genai.Client(api_key=api_key)
-        contents = [image, prompt] if image is not None else [prompt]
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
-        )
-        return response.text
-    except Exception as e:
-        return f"⚠️ Errore durante la chiamata a Gemini API: {str(e)}"
+        return "⚠️ ERRORE: Inserisci una chiave API Gemini valida nelle impostazioni della barra laterale o nei Secrets."
+
+    client = genai.Client(api_key=api_key)
+    contents = [image, prompt] if image is not None else [prompt]
+
+    # Lista di sicurezza: parte dal modello scelto e, se occupato (503), prova gli altri in automatico
+    modelli_fallback = [model_name]
+    for m_alt in ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash", "gemini-2.0-flash"]:
+        if m_alt not in modelli_fallback:
+            modelli_fallback.append(m_alt)
+
+    ultimo_errore = ""
+    for mod in modelli_fallback:
+        for tentativo in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=mod,
+                    contents=contents,
+                )
+                return response.text
+            except Exception as e:
+                err_str = str(e)
+                ultimo_errore = err_str
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
+                    time.sleep(1.5)
+                    continue
+                break
+    return f"⚠️ Errore durante la chiamata a Gemini API: {ultimo_errore}"
+
+
+def genera_proposta_diagnosi_terapia_ai(api_key: str, contesto: str, model_name: str):
+    """Interroga Gemini per suggerire Diagnosi e Piano Terapeutico separati e popola i campi modificabili."""
+    prompt = f"""
+Sei un medico specialista in Anestesia, Rianimazione e Terapia del Dolore.
+Analizza i seguenti dati clinici raccolti durante la visita (inclusi anamnesi, tabelle farmaci, esame obiettivo, eventuali referti OCR ed eventuali scale cliniche).
+Elabora una proposta clinica strutturata dividendola esattamente in due parti separate dal marcatore ===TERAPIA===:
+
+Nella PRIMA PARTE scrivi l'IPOTESI DIAGNOSTICA (nosografica ed eziopatogenetica del dolore: nocicettivo, neuropatico, nociplastico o misto, indicando il distretto/livello).
+Poi scrivi su una nuova riga esattamente:
+===TERAPIA===
+Nella SECONDA PARTE scrivi la PROPOSTA TERAPEUTICA E INTERVENTISTICA (farmaci con principio attivo, posologia e titolazione prudente, eventuali procedure infiltrative/ozonoterapia consigliate, riabilitazione e tempistiche di controllo).
+Non usare asterischi o cancelletti Markdown.
+
+DATI CLINICI DEL PAZIENTE:
+{contesto}
+"""
+    risposta = chiama_gemini(api_key, prompt, model_name=model_name)
+    if "===TERAPIA===" in risposta:
+        parti = risposta.split("===TERAPIA===", 1)
+        diag = parti[0].replace("IPOTESI DIAGNOSTICA:", "").strip()
+        ter = parti[1].replace("PROPOSTA TERAPEUTICA E INTERVENTISTICA:", "").strip()
+        imposta_diagnosi_e_terapia(diag, ter)
+    else:
+        imposta_diagnosi_e_terapia("Vedi proposta complessiva sotto.", risposta.strip())
 
 
 # ==========================================
-# 5. ATLANTE SEMEIOLOGICO ALGOLOGICO
+# 6. ATLANTE SEMEIOLOGICO ALGOLOGICO
 # ==========================================
 ATLANTE_SEMEIOTICA = {
     "Test di Lasègue (SLR) e Bragard — Radicolopatia L4-S1": {
         "target": "Radici L5, S1 (più raramente L4) / Conflitto disco-radicolare",
-        "esecuzione": (
-            "Paziente supino. Sollevamento passivo dell'arto inferiore a ginocchio esteso. "
-            "Bragard: si abbassa l'arto di 5° rispetto alla soglia algica e si dorsiflette passivamente la caviglia."
-        ),
-        "positivita": (
-            "Dolore radicolare irradiato sotto il ginocchio tra **30° e 70°**. "
-            "Il Lasègue crociato ha specificità >90% per ernia discale."
-        ),
+        "esecuzione": "Paziente supino. Sollevamento passivo dell'arto inferiore a ginocchio esteso + Bragard (dorsiflessione passiva caviglia).",
+        "positivita": "Dolore radicolare irradiato sotto il ginocchio tra **30° e 70°**. Il Lasègue crociato ha specificità >90% per ernia discale.",
         "yt_url": "https://www.youtube.com/results?search_query=Straight+Leg+Raise+Test+Lasegue+Bragard+Physiotutors",
     },
     "Test di Wasserman (Femoral Stretch) — Radicolopatia L2-L4": {
@@ -394,52 +793,13 @@ ATLANTE_SEMEIOTICA = {
 
 
 # ==========================================
-# 6. SIDEBAR: CONFIGURAZIONE & CLOUD SYNC
+# 7. SIDEBAR PULITA CON SOTTO-MENÙ ESPANDIBILI
 # ==========================================
 with st.sidebar:
     st.title("🩺 Suite Algologica")
     st.caption("Supporto clinico & Database Ricerca")
     st.divider()
 
-    api_key_secret = (
-        st.secrets.get("GEMINI_API_KEY", "")
-        if "GEMINI_API_KEY" in st.secrets
-        else ""
-    )
-    if api_key_secret:
-        st.success("🔒 API Key Gemini attiva")
-        api_key = api_key_secret
-    else:
-        api_key = st.text_input("🔑 Gemini API Key:", type="password")
-
-    # Configurazione Webhook Google Sheets (per salvataggio fisico su Google Drive)
-    gsheet_secret = (
-        st.secrets.get("GSHEET_WEBHOOK_URL", "")
-        if "GSHEET_WEBHOOK_URL" in st.secrets
-        else ""
-    )
-    if gsheet_secret:
-        gsheet_url = gsheet_secret
-        st.success("☁️ Google Drive Sync attivo")
-    else:
-        gsheet_url = st.text_input(
-            "☁️ URL Webhook Google Sheet (opz.):",
-            placeholder="https://script.google.com/macros/s/...",
-            help="Incolla l'URL del tuo Google Apps Script per salvare ogni visita in tempo reale sul tuo Google Drive.",
-        )
-
-    # Sincronizzazione automatica all'avvio se Google Sheet è collegato
-    if gsheet_url and not st.session_state["gsheet_synced"]:
-        recuperate = sincronizza_da_gsheet(gsheet_url)
-        st.session_state["gsheet_synced"] = True
-        if recuperate > 0:
-            st.toast(f"☁️ Sincronizzate {recuperate} visite da Google Drive!")
-
-    modello_scelto = st.selectbox(
-        "Modello AI:", ["gemini-3.8-flash", "gemini-3.8-pro"], index=0
-    )
-
-    st.divider()
     tipo_prestazione = st.radio(
         "📋 Tipo di Prestazione (Auto-adattivo):",
         LISTA_PRESTAZIONI,
@@ -449,13 +809,81 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Nuovo Paziente / Svuota Schermata", use_container_width=True):
         for key, val in default_states.items():
-            if key != "gsheet_synced":
+            if key not in ["gsheet_synced", "ver_dom", "ver_ant", "ver_prescr"]:
                 st.session_state[key] = val
+        st.session_state["df_terapia_dom"] = get_empty_dom_df()
+        st.session_state["df_terapia_antalgica"] = get_empty_antalgica_df()
+        st.session_state["df_terapia_prescritta"] = get_empty_antalgica_df()
+        st.session_state["ver_dom"] += 1
+        st.session_state["ver_ant"] += 1
+        st.session_state["ver_prescr"] += 1
         st.rerun()
+
+    st.divider()
+
+    # SOTTO-MENÙ 1: IMPOSTAZIONI DI SISTEMA & API
+    with st.expander("⚙️ Impostazioni di Sistema & API"):
+        api_key_secret = (
+            st.secrets.get("GEMINI_API_KEY", "")
+            if "GEMINI_API_KEY" in st.secrets
+            else ""
+        )
+        if api_key_secret:
+            st.success("🔒 API Key Gemini attiva (Secrets)")
+            api_key = api_key_secret
+        else:
+            api_key = st.text_input("🔑 Gemini API Key:", type="password")
+
+        modello_scelto = st.selectbox(
+            "Modello AI:",
+            ["gemini-3.8-flash", "gemini-3.8-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+            index=0,
+        )
+
+        gsheet_secret = (
+            st.secrets.get("GSHEET_WEBHOOK_URL", "")
+            if "GSHEET_WEBHOOK_URL" in st.secrets
+            else ""
+        )
+        if gsheet_secret:
+            gsheet_url = gsheet_secret
+            st.success("☁️ Google Drive Sync attivo")
+        else:
+            gsheet_url = st.text_input(
+                "☁️ URL Webhook Google Sheet (opz.):",
+                placeholder="https://script.google.com/macros/s/...",
+            )
+
+        if gsheet_url and not st.session_state["gsheet_synced"]:
+            recuperate = sincronizza_da_gsheet(gsheet_url)
+            st.session_state["gsheet_synced"] = True
+            if recuperate > 0:
+                st.toast(f"☁️ Sincronizzate {recuperate} visite da Google Drive!")
+
+    # SOTTO-MENÙ 2: ARCHIVIO E BACKUP RAPIDO
+    with st.expander("🗄️ Gestione Archivio & Backup"):
+        tutti_ids = get_tutti_id_pazienti()
+        st.caption(f"Pazienti in archivio: **{len(tutti_ids)}**")
+        json_backup = esporta_db_json()
+        st.download_button(
+            label="⬇️ Scarica Backup (.json)",
+            data=json_backup,
+            file_name=f"backup_ambulatorio_dolore_{date.today().strftime('%Y%m%d')}.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+        file_restore = st.file_uploader("⬆️ Ripristina da file .json", type=["json"])
+        if file_restore is not None:
+            if st.button("Importa Visite nel DB", use_container_width=True):
+                n_imp = importa_lista_record_db(
+                    json.loads(file_restore.read().decode("utf-8"))
+                )
+                st.success(f"Importate {n_imp} nuove visite!")
+                st.rerun()
 
 
 # ==========================================
-# 7. INTESTAZIONE PAZIENTE E RICONOSCIMENTO STORICO
+# 8. INTESTAZIONE PAZIENTE E RICONOSCIMENTO STORICO
 # ==========================================
 st.header(f"Amb. Terapia del Dolore — {tipo_prestazione.split('. ')[1]}")
 
@@ -488,6 +916,8 @@ sedute_ozono_pregresse = [
 ]
 
 # Variabili per il salvataggio strutturato nel DB di ricerca
+ter_dom_testo_db = ""
+ter_ant_testo_db = ""
 meccanismo_db = None
 nrs_rip_db, nrs_mov_db = None, None
 pgic_db = None
@@ -526,37 +956,150 @@ if id_paziente.strip():
 
 
 # ==========================================
-# 8. STRUTTURA A 5 SCHEDE (INCLUSO DB RICERCA)
+# 9. STRUTTURA A 5 SCHEDE
 # ==========================================
 tab_visita, tab_ocr, tab_tools, tab_output, tab_db = st.tabs(
     [
-        "📝 1. Scheda Clinica & EO",
+        "📝 1. Scheda Clinica, Terapie & Diagnosi",
         "📷 2. Scansione Referti (OCR)",
         "🛠️ 3. Coltellino Svizzero (Scale & Oppioidi)",
-        "📄 4. Referto AI & Salvataggio",
+        "📄 4. Referto Finale Completo & Salvataggio",
         "📊 5. Database & Ricerca Clinica",
     ]
 )
 
 # ==============================================================================
-# TAB 1: SCHEDA CLINICA DINAMICA IN BASE ALLA PRESTAZIONE
+# TAB 1: SCHEDA CLINICA, TABELLE FARMACI CON CONVERSIONE MOLECOLE, EO E DIAGNOSI
 # ==============================================================================
 with tab_visita:
     dati_raccolti = f"ID PAZIENTE: {id_paziente or 'Non specificato'} ({fascia_eta}) - DATA: {data_visita.strftime('%d/%m/%Y')}\n"
     dati_raccolti += f"PRESTAZIONE: {tipo_prestazione.split('. ')[1]}\n\n"
 
+    # --- CASO 1: PRIMA VISITA ALGOLOGICA ---
     if tipo_prestazione.startswith("1."):
-        st.subheader("Anamnesi Generale e Farmacologica")
+        st.subheader("1. Anamnesi Patologica e Farmacologica Strutturata")
         c1, c2 = st.columns(2)
         with c1:
-            apr = st.text_area("Anamnesi Patologica Remota", height=90)
-            allergie_anticoag = st.text_input("⚠️ Allergie / Anticoagulanti o Antiaggreganti")
+            apr = st.text_area(
+                "Anamnesi Patologica Remota (Comorbidità)",
+                height=85,
+                placeholder="es. Ipertensione arteriosa, Diabete mellito tipo 2, IRC stadio II, pregressa chirurgia vertebrale...",
+            )
         with c2:
-            terapia_domiciliare = st.text_area("Terapia Antalgica e Domiciliare in Atto", height=90)
-            trattamenti_pregressi = st.text_input("Precedenti Trattamenti Antalgici / Fisioterapici")
+            allergie_anticoag = st.text_input(
+                "⚠️ Allergie a Farmaci / Terapia Anticoagulante o Antiaggregante",
+                placeholder="es. Allergia a FANS; assume Apixaban / Acido Acetilsalicilico...",
+            )
+            trattamenti_pregressi = st.text_input(
+                "Precedenti Trattamenti Antalgici / Fisioterapici / Infiltrativi",
+                placeholder="es. Ciclo FKT, 2 infiltrazioni peridurali nel 2025...",
+            )
+
+        st.markdown(
+            "##### 💊 Tabelle Terapia Domiciliare e Terapia Antalgica in Corso *(Conversione Automatica Nome Commerciale ➔ Molecola)*"
+        )
+        st.caption(
+            "💡 *Scrivi il nome commerciale (es. **Targin, Lyrica, Tachipirina, Palexia, Eliquis, Pantorc, Triatec**) nella colonna Principio Attivo e premi Invio: verrà tradotto automaticamente nella molecola corrispondente! Clicca `+` in basso alla tabella per aggiungere altri farmaci.*"
+        )
+
+        col_tdom, col_tant = st.columns(2)
+
+        with col_tdom:
+            st.markdown("**🏠 Terapia Domiciliare (Generale / Internistica)**")
+            df_dom_edit = st.data_editor(
+                st.session_state["df_terapia_dom"],
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key=f"editor_dom_{st.session_state['ver_dom']}",
+                column_config={
+                    "Principio Attivo": st.column_config.TextColumn(
+                        "Principio Attivo (o Commerciale)",
+                        help="Digita principio attivo o nome commerciale (verrà convertito in molecola)",
+                    ),
+                    "Posologia": st.column_config.TextColumn(
+                        "Posologia",
+                        help="es. 5 mg, 100 mg, 1 cp",
+                    ),
+                    "Frequenza": st.column_config.TextColumn(
+                        "Frequenza",
+                        help="es. 1/die (mattina), x 2/die (ogni 12h)",
+                    ),
+                },
+            )
+            df_dom_norm, conv_dom = normalizza_df_farmaci(df_dom_edit)
+            st.session_state["df_terapia_dom"] = df_dom_norm
+            if conv_dom:
+                st.session_state["ver_dom"] += 1
+                for msg in conv_dom:
+                    st.toast(f"💊 Convertito in molecola: {msg}")
+                st.rerun()
+
+        with col_tant:
+            st.markdown("**💉 Terapia Antalgica in Corso**")
+            df_ant_edit = st.data_editor(
+                st.session_state["df_terapia_antalgica"],
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key=f"editor_ant_{st.session_state['ver_ant']}",
+                column_config={
+                    "Principio Attivo": st.column_config.TextColumn(
+                        "Principio Attivo (o Commerciale)",
+                        help="es. Lyrica, Targin, Palexia, Contramal, Laroxyl...",
+                    ),
+                    "Posologia": st.column_config.TextColumn(
+                        "Posologia",
+                        help="es. 75 mg, 10/5 mg, 25 mcg/h, 10 gtt",
+                    ),
+                    "Frequenza": st.column_config.TextColumn(
+                        "Frequenza",
+                        help="es. x 2/die (ogni 12h), ogni 72h, al bisogno",
+                    ),
+                    "Efficacia / Note": st.column_config.TextColumn(
+                        "Efficacia / Note",
+                        help="es. Scarso beneficio, vertigini, ben tollerato",
+                    ),
+                },
+            )
+            df_ant_norm, conv_ant = normalizza_df_farmaci(df_ant_edit)
+            st.session_state["df_terapia_antalgica"] = df_ant_norm
+            if conv_ant:
+                st.session_state["ver_ant"] += 1
+                for msg in conv_ant:
+                    st.toast(f"💊 Convertito in molecola: {msg}")
+                st.rerun()
+
+        # Pulsante opzionale AI per nomi commerciali rarissimi non presenti nel dizionario rapido
+        if st.button("🪄 Converti eventuali nomi commerciali rari in tabella tramite Gemini AI"):
+            with st.spinner("Conversione nomi commerciali rari in principi attivi..."):
+                for key_df, key_ver in [
+                    ("df_terapia_dom", "ver_dom"),
+                    ("df_terapia_antalgica", "ver_ant"),
+                ]:
+                    df_curr = st.session_state[key_df].copy()
+                    modificato_ai = False
+                    for idx_r, row_r in df_curr.iterrows():
+                        voce_f = str(row_r.get("Principio Attivo") or "").strip()
+                        if voce_f:
+                            p_ai = (
+                                f"Restituisci SOLO ED ESCLUSIVAMENTE il principio attivo (molecola in italiano) "
+                                f"del seguente farmaco (se è già un principio attivo restituiscilo invariato, senza spiegazioni): {voce_f}"
+                            )
+                            ris_mol = chiama_gemini(api_key, p_ai, model_name=modello_scelto).strip()
+                            if ris_mol and not ris_mol.startswith("⚠️") and ris_mol.lower() != voce_f.lower():
+                                df_curr.at[idx_r, "Principio Attivo"] = ris_mol
+                                modificato_ai = True
+                    if modificato_ai:
+                        st.session_state[key_df] = df_curr
+                        st.session_state[key_ver] += 1
+                st.rerun()
+
+        ter_dom_testo_db = formatta_df_farmaci_testo(st.session_state["df_terapia_dom"], mostra_note=False)
+        ter_ant_testo_db = formatta_df_farmaci_testo(st.session_state["df_terapia_antalgica"], mostra_note=True)
 
         st.divider()
-        st.subheader("Anamnesi Antalgica e Caratteristiche del Dolore")
+        st.subheader("2. Anamnesi Antalgica e Caratteristiche del Dolore")
         ca1, ca2, ca3 = st.columns(3)
         with ca1:
             esordio_durata = st.text_input("Esordio e Durata")
@@ -620,7 +1163,7 @@ with tab_visita:
         meccanismo_db = ", ".join(meccanismo_prevalente)
 
         st.divider()
-        st.subheader("Esame Obiettivo Algologico e Manovre Semeiologiche")
+        st.subheader("3. Esame Obiettivo Algologico e Manovre Semeiologiche")
         ceo1, ceo2 = st.columns([2, 1])
         with ceo1:
             eo_ispezione_palpazione = st.text_area("Ispezione, Palpazione e Trigger Points", height=100)
@@ -636,8 +1179,11 @@ with tab_visita:
                 st.link_button("🎥 Apri Video Dimostrativi su YouTube", info_manovra["yt_url"], use_container_width=True)
 
         dati_raccolti += (
-            f"APR: {apr}\nALLERGIE / ANTICOAGULANTI: {allergie_anticoag}\n"
-            f"TERAPIA IN ATTO: {terapia_domiciliare}\nTRATTAMENTI PREGRESSI: {trattamenti_pregressi}\n\n"
+            f"ANAMNESI PATOLOGICA REMOTA: {apr}\n"
+            f"ALLERGIE / ANTICOAGULANTI: {allergie_anticoag}\n"
+            f"TRATTAMENTI ANTALGICI PREGRESSI: {trattamenti_pregressi}\n\n"
+            f"TERAPIA DOMICILIARE GENERALE:\n{ter_dom_testo_db}\n\n"
+            f"TERAPIA ANTALGICA IN CORSO:\n{ter_ant_testo_db}\n\n"
             f"ANAMNESI ANTALGICA:\n- Esordio/Durata: {esordio_durata}\n- Sede e irradiazione: {sede_irradiazione}\n"
             f"- Caratteri: {', '.join(caratteri_dolore)} ({ritmo_dolore})\n- Fattori modulanti: {fattori_mod}\n"
             f"- Impatto Sonno/ADL: {impatto_sonno_adl}\n- Intensità: NRS a riposo {nrs_riposo}/10, NRS dinamico {nrs_movimento}/10\n"
@@ -645,6 +1191,7 @@ with tab_visita:
             f"ESAME OBIETTIVO:\n{eo_ispezione_palpazione}\n{eo_neuro_manovre}\n"
         )
 
+    # --- CASO 2: VISITA DI CONTROLLO ---
     elif tipo_prestazione.startswith("2."):
         st.subheader("Valutazione Evolutiva di Controllo")
         cc1, cc2 = st.columns(2)
@@ -667,17 +1214,36 @@ with tab_visita:
             )
             nrs_attuale_rip = st.slider("NRS Attuale a Riposo", 0, 10, 2)
             nrs_attuale_mov = st.slider("NRS Attuale in Movimento", 0, 10, 4)
-            eo_controllo = st.text_area("Rivalutazione Obiettiva Odierna e Modifiche Terapeutiche", height=80)
+            eo_controllo = st.text_area("Rivalutazione Obiettiva Odierna", height=80)
 
+        st.markdown("##### 💉 Tabella Terapia Antalgica Attualmente Assunta (Opzionale)")
+        df_ant_ctrl = st.data_editor(
+            st.session_state["df_terapia_antalgica"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key=f"editor_ant_ctrl_{st.session_state['ver_ant']}",
+        )
+        df_ant_norm_c, conv_ant_c = normalizza_df_farmaci(df_ant_ctrl)
+        st.session_state["df_terapia_antalgica"] = df_ant_norm_c
+        if conv_ant_c:
+            st.session_state["ver_ant"] += 1
+            for msg in conv_ant_c:
+                st.toast(f"💊 Convertito in molecola: {msg}")
+            st.rerun()
+
+        ter_ant_testo_db = formatta_df_farmaci_testo(st.session_state["df_terapia_antalgica"], mostra_note=True)
         nrs_rip_db, nrs_mov_db = nrs_attuale_rip, nrs_attuale_mov
         pgic_db = esito_globale
 
         dati_raccolti += (
             f"QUADRO PRECEDENTE IN FOLLOW-UP:\n{diagnosi_nota}\n\n"
+            f"TERAPIA ANTALGICA IN CORSO:\n{ter_ant_testo_db}\n\n"
             f"ANDAMENTO CLINICO ODIERNO: {esito_globale} (NRS attuale a riposo {nrs_attuale_rip}/10, in movimento {nrs_attuale_mov}/10)\n"
             f"TOLLERABILITÀ/ADERENZA: {aderenza_tollerabilita}\nESAME OBIETTIVO ODIERNO: {eo_controllo}\n"
         )
 
+    # --- CASO 3 & 4: PROCEDURA INFILTRATIVA ---
     elif tipo_prestazione.startswith("3.") or tipo_prestazione.startswith("4."):
         st.subheader("Verbale Procedura Interventistica / Infiltrativa")
         ci1, ci2, ci3 = st.columns(3)
@@ -732,6 +1298,7 @@ with tab_visita:
             f"ESITO IMMEDIATO: {decorso_post}\n"
         )
 
+    # --- CASO 5: DAY-HOSPITAL OZONOTERAPIA SISTEMICA ---
     elif tipo_prestazione.startswith("5."):
         st.subheader("Seduta di Ozonoterapia Sistemica (Grande Autoemoinfusione - GAEI)")
         if sedute_ozono_pregresse:
@@ -770,6 +1337,7 @@ with tab_visita:
             f"NRS odierno: {nrs_ozono}/10. Note cliniche e biofisiche: {note_biotekna}\n"
         )
 
+    # --- CASO 6: RINNOVO PRESCRIZIONE CANNABIS ---
     elif tipo_prestazione.startswith("6."):
         st.subheader("Valutazione e Rinnovo Piano Terapeutico Cannabis Medica")
         ccan1, ccan2 = st.columns(2)
@@ -817,6 +1385,79 @@ with tab_visita:
             f"Indicazione: {patologia_cannabis}\nPreparato: {preparato_cannabis}\n"
             f"Posologia: {via_somm_posologia}\nEfficacia clinica: {beneficio_cannabis}\n"
             f"Sicurezza e tollerabilità: {', '.join(effetti_avversi_can)}\n"
+        )
+
+    # ==========================================================================
+    # SEZIONE DIAGNOSI E TERAPIA PROPOSTA (IN FONDO ALLA SCHEDA 1)
+    # ==========================================================================
+    st.divider()
+    st.subheader("4. Diagnosi e Terapia Proposta (Conferma Medico o Suggerimento AI)")
+    st.caption(
+        "Puoi scrivere direttamente a mano la diagnosi e la terapia proposta, oppure fartele suggerire dall'AI sulla base dei dati raccolti (inclusi eventuali referti OCR della Scheda 2 e Scale della Scheda 3)."
+    )
+
+    contesto_per_proposta = dati_raccolti
+    if st.session_state["ocr_estratti"].strip():
+        contesto_per_proposta += f"\nINDAGINI STRUMENTALI (OCR):\n{st.session_state['ocr_estratti']}\n"
+    if st.session_state["note_scale_cliniche"].strip():
+        contesto_per_proposta += f"\nSCALE E CALCOLATORI CLINICI:\n{st.session_state['note_scale_cliniche']}\n"
+
+    if st.button(
+        "🧠 Chiedi a Gemini AI: Suggerisci Ipotesi Diagnostica e Terapia Proposta",
+        type="secondary",
+        use_container_width=True,
+        key="btn_ai_proposta_t1",
+    ):
+        with st.spinner("Analisi clinica in corso per formulare ipotesi diagnostica e proposta terapeutica..."):
+            genera_proposta_diagnosi_terapia_ai(api_key, contesto_per_proposta, modello_scelto)
+            st.rerun()
+
+    # Opzione rapida per comporre i nuovi farmaci prescritti anche con tabella auto-tradotta
+    with st.expander("➕ Componi Nuovi Farmaci Prescritti con Tabella Strutturata (Conversione automatica Nome Commerciale ➔ Molecola)"):
+        df_prescr_edit = st.data_editor(
+            st.session_state["df_terapia_prescritta"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            key=f"editor_prescr_{st.session_state['ver_prescr']}",
+            column_config={
+                "Principio Attivo": st.column_config.TextColumn("Principio Attivo (o Commerciale)"),
+                "Posologia": st.column_config.TextColumn("Posologia"),
+                "Frequenza": st.column_config.TextColumn("Frequenza / Orari"),
+                "Efficacia / Note": st.column_config.TextColumn("Durata / Indicazioni"),
+            },
+        )
+        df_prescr_norm, conv_prescr = normalizza_df_farmaci(df_prescr_edit)
+        st.session_state["df_terapia_prescritta"] = df_prescr_norm
+        if conv_prescr:
+            st.session_state["ver_prescr"] += 1
+            for msg in conv_prescr:
+                st.toast(f"💊 Convertito in molecola: {msg}")
+            st.rerun()
+
+        if st.button("📥 Inserisci questi farmaci nel box 'Terapia Proposta' qui sotto"):
+            testo_nuovi_farmaci = formatta_df_farmaci_testo(st.session_state["df_terapia_prescritta"], mostra_note=True)
+            attuale_ter = st.session_state["terapia_proposta"]
+            nuova_ter = f"{attuale_ter}\n{testo_nuovi_farmaci}".strip() if attuale_ter else testo_nuovi_farmaci
+            imposta_diagnosi_e_terapia(st.session_state["diagnosi_confermata"], nuova_ter)
+            st.rerun()
+
+    cdiag1, cdiag2 = st.columns(2)
+    with cdiag1:
+        st.text_area(
+            "🎯 Diagnosi Clinica / Inquadramento Algologico (Confermata dal Medico):",
+            key="diag_t1",
+            on_change=sync_diag_from_t1,
+            height=140,
+            placeholder="Scrivi qui la diagnosi oppure clicca il pulsante AI sopra per generare un suggerimento da confermare...",
+        )
+    with cdiag2:
+        st.text_area(
+            "💊 Terapia Proposta / Piano Interventistico e Controlli (Confermata dal Medico):",
+            key="ter_t1",
+            on_change=sync_ter_from_t1,
+            height=140,
+            placeholder="Scrivi qui la terapia farmacologica/infiltrativa proposta oppure modifica quella suggerita dall'AI...",
         )
 
 
@@ -868,7 +1509,7 @@ with tab_ocr:
 
 
 # ==============================================================================
-# TAB 3: IL COLTELLINO SVIZZERO (SALVA ANCHE VARIABILI NUMERICHE PER RICERCA!)
+# TAB 3: IL COLTELLINO SVIZZERO (SCALE CLINICHE & CALCOLATORI)
 # ==============================================================================
 with tab_tools:
     st.subheader("🛠️ Strumenti Clinici e Calcolatori Algologici")
@@ -1013,30 +1654,68 @@ with tab_tools:
 
 
 # ==============================================================================
-# TAB 4: SINTESI AI, COPIA PC OSPEDALE E SALVATAGGIO STORICO DB
+# TAB 4: VERIFICA DIAGNOSI/TERAPIA -> GENERAZIONE REFERTO FINALE -> SALVATAGGIO
 # ==============================================================================
 with tab_output:
-    st.subheader("📄 Generazione Referto Clinico e Salvataggio in Archivio")
+    st.subheader("🩺 Passo 1: Verifica e Conferma Diagnosi e Terapia Proposta")
+    st.caption(
+        "Questi campi sono sincronizzati con quelli della Scheda 1. Se hai appena aggiunto un OCR (Scheda 2) o una Scala (Scheda 3), puoi cliccare il bottone qui sotto per aggiornare il suggerimento AI prima di generare il referto finale."
+    )
 
-    contesto_clinico_completo = dati_raccolti
+    contesto_base = dati_raccolti
     if st.session_state["ocr_estratti"].strip():
-        contesto_clinico_completo += f"\nINDAGINI STRUMENTALI (OCR):\n{st.session_state['ocr_estratti']}\n"
+        contesto_base += f"\nINDAGINI STRUMENTALI (OCR):\n{st.session_state['ocr_estratti']}\n"
     if st.session_state["note_scale_cliniche"].strip():
-        contesto_clinico_completo += f"\nSCALE E CALCOLATORI CLINICI:\n{st.session_state['note_scale_cliniche']}\n"
+        contesto_base += f"\nSCALE E CALCOLATORI CLINICI:\n{st.session_state['note_scale_cliniche']}\n"
+
+    if st.button(
+        "🧠 Suggerisci / Aggiorna Diagnosi e Terapia con Gemini AI (includendo OCR e Scale)",
+        use_container_width=True,
+        key="btn_ai_proposta_t4",
+    ):
+        with st.spinner("Formulazione ipotesi diagnostica e piano terapeutico in corso..."):
+            genera_proposta_diagnosi_terapia_ai(api_key, contesto_base, modello_scelto)
+            st.rerun()
+
+    col_d4, col_t4 = st.columns(2)
+    with col_d4:
+        st.text_area(
+            "🎯 Diagnosi Clinica Confermata:",
+            key="diag_t4",
+            on_change=sync_diag_from_t4,
+            height=130,
+        )
+    with col_t4:
+        st.text_area(
+            "💊 Terapia Proposta e Programma Confermato:",
+            key="ter_t4",
+            on_change=sync_ter_from_t4,
+            height=130,
+        )
+
+    # Costruiamo il contesto finale completo includendo la Diagnosi e la Terapia confermate dal medico
+    contesto_clinico_completo = contesto_base
+    if st.session_state["diagnosi_confermata"].strip():
+        contesto_clinico_completo += f"\nCONCLUSIONI DIAGNOSTICHE CONFERMATE DAL MEDICO:\n{st.session_state['diagnosi_confermata']}\n"
+    if st.session_state["terapia_proposta"].strip():
+        contesto_clinico_completo += f"\nPROGRAMMA TERAPEUTICO PROPOSTO E CONFERMATO DAL MEDICO:\n{st.session_state['terapia_proposta']}\n"
+
+    st.divider()
+    st.subheader("📄 Passo 2: Generazione Referto Finale Completo e Salvataggio")
 
     col_btn1, col_btn2, col_btn3 = st.columns(3)
     with col_btn1:
-        if st.button("✨ 1. Genera Referto con Gemini AI", type="primary", use_container_width=True):
-            with st.spinner("Elaborazione clinica in corso con Gemini..."):
+        if st.button("✨ 1. Genera Referto Formale Completo con AI", type="primary", use_container_width=True):
+            with st.spinner("Stesura referto formale completo in corso..."):
                 prompt_referto = f"""
 Sei un medico specialista esperto in Anestesia, Rianimazione e Terapia del Dolore.
-Redigi un referto medico specialistico completo, formale e pronto per essere incollato nella cartella clinica ospedaliera.
+Redigi un referto medico specialistico completo, formale e pronto per essere incollato nella cartella clinica ospedaliera, rispettando fedelmente la Diagnosi e la Terapia Proposta confermate dal medico.
 
-DATI RACCOLTI OGGI:
+DATI CLINICI, DIAGNOSI E TERAPIA CONFERMATA:
 {contesto_clinico_completo}
 
 STRUTTURA RICHIESTA:
-1. INQUADRAMENTO ANAMNESTICO E CLINICO
+1. INQUADRAMENTO ANAMNESTICO E TERAPIA IN ATTO (distinguendo terapia domiciliare generale e terapia antalgica in corso con i principi attivi)
 2. ESAME OBIETTIVO E VALUTAZIONE ALGOMETRICA/SCALE
 3. ESAMI STRUMENTALI VISIONATI (se presenti)
 4. CONCLUSIONI DIAGNOSTICHE
@@ -1049,7 +1728,7 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
                 )
 
     with col_btn2:
-        if st.button("⚡ Assembla Testo Rapido (Senza AI)", use_container_width=True):
+        if st.button("⚡ Assembla Referto Completo Istantaneo (Senza AI)", use_container_width=True):
             st.session_state["bozza_referto_finale"] = contesto_clinico_completo
 
     with col_btn3:
@@ -1063,6 +1742,8 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
                     "data_visita": data_visita.strftime("%d/%m/%Y"),
                     "timestamp_salvataggio": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "tipo_prestazione": tipo_prestazione,
+                    "terapia_domiciliare": ter_dom_testo_db,
+                    "terapia_antalgica": ter_ant_testo_db,
                     "meccanismo_dolore": meccanismo_db,
                     "nrs_riposo": nrs_rip_db,
                     "nrs_movimento": nrs_mov_db,
@@ -1078,6 +1759,8 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
                     "ozono_conc_ug_ml": oz_conc_db,
                     "ozono_vol_ml": oz_vol_db,
                     "cannabis_preparato": cannabis_prep_db,
+                    "diagnosi_confermata": st.session_state.get("diagnosi_confermata", ""),
+                    "terapia_proposta": st.session_state.get("terapia_proposta", ""),
                     "dati_clinici": dati_raccolti,
                     "ocr_estratti": st.session_state["ocr_estratti"],
                     "scale_cliniche": st.session_state["note_scale_cliniche"],
@@ -1089,9 +1772,9 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
                 st.rerun()
 
     st.divider()
-    st.markdown("##### Revisione del Testo")
+    st.markdown("##### Revisione Finale del Referto Completo")
     st.session_state["bozza_referto_finale"] = st.text_area(
-        "Modifica liberamente il referto prima di copiarlo o salvarlo:",
+        "Modifica liberamente il referto finale prima di copiarlo o salvarlo:",
         value=st.session_state["bozza_referto_finale"],
         height=300,
     )
@@ -1105,12 +1788,12 @@ Non usare formattazioni Markdown invasive (evita asterischi o cancelletti) per f
 
 
 # ==============================================================================
-# TAB 5: ESPLORAZIONE DATABASE ED ESPORTAZIONE PER RICERCA CLINICA (CSV/SQLITE)
+# TAB 5: ESPLORAZIONE DATABASE ED ESPORTAZIONE PER RICERCA CLINICA
 # ==============================================================================
 with tab_db:
     st.subheader("📊 Esploratore Database & Esportazione per Ricerca Clinica")
     st.caption(
-        "Tutti i parametri clinici (NRS, DN4, FIQR, MME, Ozono, Procedure) sono strutturati in colonne indipendenti pronte per l'analisi statistica (Excel, R, SPSS, Jamovi)."
+        "Tutti i parametri clinici (incluse Terapia Domiciliare, Terapia Antalgica, Diagnosi Confermata, Terapia Proposta, NRS, Scale e Ozono) sono in colonne indipendenti per Excel, R, SPSS o Jamovi."
     )
 
     df_tot = get_df_tutte_visite()
@@ -1118,7 +1801,6 @@ with tab_db:
     if df_tot.empty:
         st.info("Il database è attualmente vuoto. Salva almeno una visita dalla Scheda 4 per popolare la tabella di ricerca.")
     else:
-        # Statistiche sintetiche del dataset
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Totale Accessi Registrati", len(df_tot))
         k2.metric("Pazienti Unici (ID)", df_tot["id_paziente"].nunique())
@@ -1128,7 +1810,6 @@ with tab_db:
         k4.metric("Sedute Ozonoterapia (GAEI)", int(sedute_oz_tot))
 
         st.divider()
-        # Filtri rapidi per esplorazione coorte
         cf_1, cf_2 = st.columns(2)
         with cf_1:
             filtro_id = st.multiselect(
@@ -1147,15 +1828,12 @@ with tab_db:
         if filtro_prest:
             df_filtrato = df_filtrato[df_filtrato["tipo_prestazione"].isin(filtro_prest)]
 
-        # Tabella interattiva esplorabile a schermo
         st.dataframe(df_filtrato, use_container_width=True, height=340)
 
-        # Pulsanti di Esportazione Scientifica (CSV per Excel/SPSS, JSON e File SQLite .db grezzo)
         st.markdown("##### 📥 Esporta Dataset per Analisi Statistica")
         cexp1, cexp2, cexp3 = st.columns(3)
 
         with cexp1:
-            # BOM UTF-8 (\ufeff) garantisce che Microsoft Excel apra subito le lettere accentate e le colonne correttamente
             csv_data = df_filtrato.to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label="📊 Scarica Dataset Ricerca (.CSV per Excel / SPSS / R)",
