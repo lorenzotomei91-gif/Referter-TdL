@@ -1222,7 +1222,7 @@ with tab_visita:
             column_config={
                 "Distretto / Sede Anatomica": st.column_config.TextColumn(
                     "Distretto / Sede Anatomica",
-                    placeholder="es. Rachide lombare + AI dx / Ginocchio dx",
+                    help="es. Rachide lombare + AI dx / Ginocchio dx",
                 ),
                 "NRS (0-10)": st.column_config.NumberColumn(
                     "NRS (0-10)",
@@ -1246,7 +1246,7 @@ with tab_visita:
                 ),
                 "Irradiazione / Caratteristiche": st.column_config.TextColumn(
                     "Irradiazione / Caratteristiche",
-                    placeholder="es. Irradiazione L5, scossa elettrica / Dolore da carico meccanico",
+                    help="es. Irradiazione L5, scossa elettrica / Dolore da carico meccanico",
                 ),
                 "Priorità": st.column_config.SelectboxColumn(
                     "Priorità",
@@ -1255,7 +1255,19 @@ with tab_visita:
                 ),
             },
         )
-        df_pg_clean = df_pg_raw.reindex(columns=COLONNE_PAIN_GEN).fillna("").reset_index(drop=True)
+        df_pg_clean = df_pg_raw.reindex(columns=COLONNE_PAIN_GEN).reset_index(drop=True)
+        df_pg_clean["NRS (0-10)"] = (
+            pd.to_numeric(df_pg_clean["NRS (0-10)"], errors="coerce")
+            .fillna(6)
+            .astype(int)
+        )
+        for col_txt in [
+            "Distretto / Sede Anatomica",
+            "Meccanismo Prevalente",
+            "Irradiazione / Caratteristiche",
+            "Priorità",
+        ]:
+            df_pg_clean[col_txt] = df_pg_clean[col_txt].fillna("")
         st.session_state["df_pain_generators"] = df_pg_clean
         pain_generators_db = formatta_pain_generators_testo(df_pg_clean)
 
