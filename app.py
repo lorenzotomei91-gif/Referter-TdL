@@ -564,15 +564,15 @@ def gestisci_tabella_farmaci(
 ) -> pd.DataFrame:
     """
     Rimuove qualsiasi colonna extra o indice fantasma di st.data_editor,
-    preserva tutte le righe inserite e converte tutti i farmaci in un solo ciclo.
+    preserva tutte le righe inserite e converte i nomi commerciali.
+    NON sovrascrive st.session_state[state_key_df] se non c'è una conversione,
+    evitando che st.data_editor cancelli i principi attivi già corretti (es. sertralina).
     """
     if colonne_standard is None:
         colonne_standard = COLONNE_DOM
 
     if df_edit is None or df_edit.empty:
-        df_vuoto = pd.DataFrame(columns=colonne_standard)
-        st.session_state[state_key_df] = df_vuoto
-        return df_vuoto
+        return pd.DataFrame(columns=colonne_standard)
 
     # Forza esclusivamente le colonne previste e azzera qualsiasi colonna indice extra
     df_norm = df_edit.reindex(columns=colonne_standard).fillna("").reset_index(drop=True)
@@ -588,15 +588,16 @@ def gestisci_tabella_farmaci(
             tradotto, msg = traduci_farmaco_intelligente(
                 val_str, api_key, model_name, webhook_url=webhook_url
             )
-            nuova_colonna.append(tradotto)
-            if msg and tradotto.strip().lower() != val_str.lower():
+            tradotto_finale = tradotto.strip() if (tradotto and tradotto.strip()) else val_str
+            nuova_colonna.append(tradotto_finale)
+            if msg and tradotto_finale.lower() != val_str.lower():
                 conversioni.append(msg)
 
     df_norm["Principio Attivo"] = nuova_colonna
-    # Salva SEMPRE il DataFrame pulito nello stato (anche quando modifichi posologia/frequenza o aggiungi righe)
-    st.session_state[state_key_df] = df_norm
 
+    # Sovrascrive lo stato base SOLO quando c'è una conversione da nome commerciale (e incrementa ver_key)
     if conversioni:
+        st.session_state[state_key_df] = df_norm
         st.session_state[state_key_ver] += 1
         for m in conversioni:
             st.toast(f"💊 {m}")
@@ -1268,7 +1269,6 @@ with tab_visita:
             "Priorità",
         ]:
             df_pg_clean[col_txt] = df_pg_clean[col_txt].fillna("")
-        st.session_state["df_pain_generators"] = df_pg_clean
         pain_generators_db = formatta_pain_generators_testo(df_pg_clean)
 
         ca1, ca2, ca3 = st.columns(3)
